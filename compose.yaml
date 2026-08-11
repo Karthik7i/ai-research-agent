@@ -3,7 +3,7 @@ services:
     build: .
     container_name: ai-research-agent-api
     env_file:
-      - .env
+      - .env.docker
     ports:
       - "8000:8000"
     extra_hosts:
