@@ -1,0 +1,19 @@
+{
+  "model_version": "v1",
+  "model_type": "RandomForestRegressor",
+  "n_estimators": 100,
+  "features": [
+    "open_price",
+    "high_price",
+    "low_price",
+    "volume",
+    "daily_return",
+    "ma_5",
+    "ma_20"
+  ],
+  "metrics": {
+    "mae": 8.51690000000003,
+    "rmse": 10.21179377717978
+  },
+  "trained_at": "2026-08-10T18:30:29.272723+00:00"
+}
