@@ -1,8 +1,9 @@
 from src.database import get_connection
 
 
-connection = get_connection()
+def test_database_connection():
+    connection = get_connection()
 
-print("Database connection successful!")
+    assert connection is not None
 
-connection.close()
+    connection.close()
