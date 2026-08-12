@@ -1,9 +1,10 @@
 from copy import deepcopy
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
 from pipelines.ingest import ingest_symbol
+from src.data_quality import validate_market_record
 from src.market_data_client import AlphaVantageMarketDataClient
 
 
@@ -117,7 +118,7 @@ def test_ingestion_updates_values_for_existing_date(monkeypatch):
 
 
 def test_ingestion_skips_invalid_or_wrong_symbol_records(monkeypatch):
-    client = FakeMarketDataClient([
+    invalid_records = [
         market_record(volume=None),
         market_record(date="not-a-date"),
         market_record(symbol="MSFT"),
@@ -127,7 +128,9 @@ def test_ingestion_skips_invalid_or_wrong_symbol_records(monkeypatch):
         market_record(high_price="217.00"),
         market_record(open_price="226.00"),
         market_record(close_price="217.00"),
-    ])
+        market_record(date=date.today() + timedelta(days=1)),
+    ]
+    client = FakeMarketDataClient(invalid_records)
     monkeypatch.setattr(
         "pipelines.ingest.get_connection",
         lambda: pytest.fail("No database connection should be opened for invalid records"),
@@ -135,7 +138,35 @@ def test_ingestion_skips_invalid_or_wrong_symbol_records(monkeypatch):
 
     result = ingest_symbol("AAPL", client)
 
-    assert result == {"fetched": 9, "valid": 0, "inserted": 0, "updated": 0, "skipped": 9}
+    assert result == {"fetched": 10, "valid": 0, "inserted": 0, "updated": 0, "skipped": 10}
+    assert all(
+        report.invalid == 1
+        for _, report in (validate_market_record(record, expected_symbol="AAPL") for record in invalid_records)
+    )
+
+
+def test_ingestion_uses_canonical_validator_issue_codes(monkeypatch):
+    connection = FakeConnection()
+    client = FakeMarketDataClient([
+        market_record(symbol="MSFT"),
+        market_record(volume="1.5"),
+        market_record(),
+    ])
+    original_validator = validate_market_record
+    observed_issue_codes = []
+
+    def tracking_validator(record, expected_symbol=None):
+        normalized_record, report = original_validator(record, expected_symbol)
+        observed_issue_codes.extend(issue.code for issue in report.issues)
+        return normalized_record, report
+
+    monkeypatch.setattr("pipelines.ingest.get_connection", lambda: connection)
+    monkeypatch.setattr("pipelines.ingest.validate_market_record", tracking_validator)
+
+    result = ingest_symbol("AAPL", client)
+
+    assert result == {"fetched": 3, "valid": 1, "inserted": 1, "updated": 0, "skipped": 2}
+    assert {"unexpected_symbol", "non_integer_volume"} <= set(observed_issue_codes)
 
 
 def test_ingestion_skips_duplicate_records_within_a_batch(monkeypatch):

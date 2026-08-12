@@ -1,21 +1,10 @@
 import argparse
-from datetime import date
-from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List
 
 from src.database import get_connection
+from src.data_quality import validate_market_record
 from src.market_data_client import AlphaVantageMarketDataClient, MarketDataClient
 
-
-REQUIRED_FIELDS = (
-    "symbol",
-    "date",
-    "open_price",
-    "high_price",
-    "low_price",
-    "close_price",
-    "volume",
-)
 
 UPSERT_MARKET_DATA_SQL = """
     INSERT INTO public.market_data (
@@ -34,66 +23,26 @@ UPSERT_MARKET_DATA_SQL = """
 
 
 def _normalize_symbol(symbol: str) -> str:
-    normalized_symbol = symbol.strip().upper()
+    normalized_symbol = str(symbol).strip().upper()
     if not normalized_symbol:
         raise ValueError("Symbol is required")
     return normalized_symbol
 
 
-def _normalize_record(record: Any, requested_symbol: str) -> Optional[Dict[str, Any]]:
-    if not isinstance(record, dict):
-        return None
-    if not all(field in record and record[field] is not None for field in REQUIRED_FIELDS):
-        return None
-
-    try:
-        symbol = _normalize_symbol(str(record["symbol"]))
-        if symbol != requested_symbol:
-            return None
-
-        normalized_date = date.fromisoformat(str(record["date"]))
-        prices = {
-            field: Decimal(str(record[field]))
-            for field in ("open_price", "high_price", "low_price", "close_price")
-        }
-        if any(not price.is_finite() for price in prices.values()):
-            return None
-        if prices["high_price"] < prices["low_price"]:
-            return None
-        if not prices["low_price"] <= prices["open_price"] <= prices["high_price"]:
-            return None
-        if not prices["low_price"] <= prices["close_price"] <= prices["high_price"]:
-            return None
-
-        volume_decimal = Decimal(str(record["volume"]))
-        if (
-            not volume_decimal.is_finite()
-            or volume_decimal < 0
-            or volume_decimal != volume_decimal.to_integral_value()
-        ):
-            return None
-        volume = int(volume_decimal)
-    except (InvalidOperation, TypeError, ValueError):
-        return None
-
-    return {
-        "symbol": symbol,
-        "date": normalized_date,
-        **prices,
-        "volume": volume,
-    }
-
-
-def _valid_records(records: Iterable[Dict[str, Any]], symbol: str) -> tuple[List[Dict[str, Any]], int]:
+def _valid_records(records: Iterable[Any], symbol: str) -> tuple[List[Dict[str, Any]], int]:
     valid_by_key = {}
     skipped = 0
 
     for record in records:
-        normalized_record = _normalize_record(record, symbol)
-        if normalized_record is None:
+        normalized_record, quality_report = validate_market_record(
+            record,
+            expected_symbol=symbol,
+        )
+        if quality_report.invalid:
             skipped += 1
             continue
 
+        assert normalized_record is not None
         key = (normalized_record["symbol"], normalized_record["date"])
         if key in valid_by_key:
             skipped += 1
