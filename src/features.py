@@ -16,31 +16,33 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
     df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values(["symbol", "date"])
 
-    df["daily_return"] = df["close_price"].pct_change()
+    grouped_close = df.groupby("symbol")["close_price"]
 
-    df["ma_5"] = (
-        df["close_price"]
-        .rolling(window=5)
-        .mean()
+    df["daily_return"] = grouped_close.pct_change()
+
+    df["ma_5"] = grouped_close.transform(
+        lambda prices: prices.rolling(window=5).mean()
     )
 
-    df["ma_20"] = (
-        df["close_price"]
-        .rolling(window=20)
-        .mean()
+    df["ma_20"] = grouped_close.transform(
+        lambda prices: prices.rolling(window=20).mean()
     )
 
     return df.dropna()
 
 
 def create_training_data(df: pd.DataFrame):
-    X = df[FEATURE_COLUMNS]
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values(["symbol", "date"])
 
     # Target: next day's closing price
-    y = df["close_price"].shift(-1)
+    y = df.groupby("symbol")["close_price"].shift(-1)
+    valid_targets = y.notna()
 
-    X = X.iloc[:-1]
-    y = y.iloc[:-1]
+    X = df.loc[valid_targets, FEATURE_COLUMNS]
+    y = y.loc[valid_targets]
 
     return X, y
